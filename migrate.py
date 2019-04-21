@@ -3,6 +3,7 @@ import datetime
 from decimal import Decimal
 import logging
 import sys
+import time
 from unidecode import unidecode
 
 import gnucash
@@ -85,8 +86,6 @@ if __name__ == '__main__':
     elif child.tag == 'transaction': # Transactions
       txDescription = unidecode(unicode(child.attrib['description']))
       year, month, day = map(int, child.attrib['date'].split('-'))
-      txDate = datetime.datetime(year=year, month=month, day=day)
-      txEnteredDate = datetime.datetime.utcfromtimestamp(float(child.attrib['mtime']))
 
       if 'payee' in child.attrib.keys():
         memo = unidecode(unicode(child.attrib['description']))
@@ -105,7 +104,7 @@ if __name__ == '__main__':
       # this is not the right choice
       tx.SetCurrency(DEFAULT_CCY)
 
-      for grandchild in child:
+      for grandchild in child: # Splits (also called legs)
         if grandchild.tag == 'split':
            splAccount = unidecode(unicode(grandchild.attrib['account'])) # This is empty string for imbalances in MoneyGuru
            splAmountStr = grandchild.attrib['amount'].split()[-1]
@@ -124,6 +123,12 @@ if __name__ == '__main__':
            spl.SetValue(gnucash.GncNumeric(amount, DEFAULT_CCY.get_fraction()))
            spl.SetAmount(gnucash.GncNumeric(amount, DEFAULT_CCY.get_fraction()))
 
+           if 'reconciliation_date' in grandchild.attrib.keys():
+             recYear, recMonth, recDay = map(int, grandchild.attrib['reconciliation_date'].split('-'))
+             recDate = datetime.datetime(day=recDay, month=recMonth, year=recYear)
+             spl.SetDateReconciledSecs(int(time.mktime(recDate.timetuple())))
+             spl.SetReconcile('y')
+             
            if memo != None:
              spl.SetMemo(memo)
         else:
