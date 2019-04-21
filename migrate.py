@@ -57,9 +57,30 @@ if __name__ == '__main__':
       acc = gnucash.Account(session.book)
       acc.SetName(groupName)
       acc.SetType(moneyGuruToGnuCashAccountType[groupType]) 
-      acc.SetCommodity(session.book.get_table().lookup("CURRENCY", "EUR"))
+      acc.SetCommodity(session.book.get_table().lookup("CURRENCY", "EUR")) # TODO: default ccy
 
       session.book.get_root_account().append_child(acc)
+
+      markMigrated(child.tag)
+    elif child.tag == 'account': # Accounts
+      # account currency="EUR" group="Chiusi" name="Bollette" type="expense"
+      acctName = unidecode(unicode(child.attrib['name']))
+      acctType = child.attrib['type']
+      acctCcy  = child.attrib['currency']
+      if 'group' in child.attrib.keys():
+        acctGroup = unidecode(unicode(child.attrib['group']))
+      else:
+        acctGroup = None
+
+      acc = gnucash.Account(session.book)
+      acc.SetName(acctName)
+      acc.SetType(moneyGuruToGnuCashAccountType[acctType]) 
+      acc.SetCommodity(session.book.get_table().lookup("CURRENCY", acctCcy))
+
+      if None != acctGroup:
+        session.book.get_root_account().lookup_by_name(acctGroup).append_child(acc)
+      else:
+        session.book.get_root_account().append_child(acc)
 
       markMigrated(child.tag)
 
