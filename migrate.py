@@ -1,7 +1,9 @@
 #!/usr/bin/env python
-from unidecode import unidecode
+import datetime
+from decimal import Decimal
 import logging
 import sys
+from unidecode import unidecode
 
 import gnucash
 import xml.etree.cElementTree as ET
@@ -47,6 +49,7 @@ if __name__ == '__main__':
 
   # - destination file
   session = gnucash.Session(sys.argv[2], is_new=True)
+  DEFAULT_CCY = session.book.get_table().lookup("CURRENCY", "EUR")
 
   # The parsing itself
   for child in root: 
@@ -57,33 +60,77 @@ if __name__ == '__main__':
       acc = gnucash.Account(session.book)
       acc.SetName(groupName)
       acc.SetType(moneyGuruToGnuCashAccountType[groupType]) 
-      acc.SetCommodity(session.book.get_table().lookup("CURRENCY", "EUR")) # TODO: default ccy
+      acc.SetCommodity(DEFAULT_CCY) # TODO: default ccy
 
       session.book.get_root_account().append_child(acc)
 
       markMigrated(child.tag)
     elif child.tag == 'account': # Accounts
-      # account currency="EUR" group="Chiusi" name="Bollette" type="expense"
       acctName = unidecode(unicode(child.attrib['name']))
       acctType = child.attrib['type']
       acctCcy  = child.attrib['currency']
-      if 'group' in child.attrib.keys():
-        acctGroup = unidecode(unicode(child.attrib['group']))
-      else:
-        acctGroup = None
 
       acc = gnucash.Account(session.book)
       acc.SetName(acctName)
       acc.SetType(moneyGuruToGnuCashAccountType[acctType]) 
       acc.SetCommodity(session.book.get_table().lookup("CURRENCY", acctCcy))
 
-      if None != acctGroup:
+      if 'group' in child.attrib.keys():
+        acctGroup = unidecode(unicode(child.attrib['group']))
         session.book.get_root_account().lookup_by_name(acctGroup).append_child(acc)
       else:
         session.book.get_root_account().append_child(acc)
 
       markMigrated(child.tag)
+    elif child.tag == 'transaction': # Transactions
+      txDescription = unidecode(unicode(child.attrib['description']))
+      year, month, day = map(int, child.attrib['date'].split('-'))
+      txDate = datetime.datetime(year=year, month=month, day=day)
+      txEnteredDate = datetime.datetime.utcfromtimestamp(float(child.attrib['mtime']))
 
+      if 'payee' in child.attrib.keys():
+        memo = unidecode(unicode(child.attrib['description']))
+      else:
+        memo = None
+
+      tx = gnucash.Transaction(session.book)
+      tx.BeginEdit()
+      tx.SetDateEnteredSecs(float(child.attrib['mtime']))
+      tx.SetDate(day, month, year)
+      tx.SetDescription(txDescription)
+
+      # Apparently, MoneyGuru supports transactions in multiple currencies (the currency is defined at split level),
+      # while GnuCash does not (the currency is defined at transaction level).
+      # For this reason, we'll put all transactions on the default currency and warn the users to fix the cases when
+      # this is not the right choice
+      tx.SetCurrency(DEFAULT_CCY)
+
+      for grandchild in child:
+        if grandchild.tag == 'split':
+           splAccount = unidecode(unicode(grandchild.attrib['account'])) # This is empty string for imbalances in MoneyGuru
+           splAmountStr = grandchild.attrib['amount'].split()[-1]
+
+           if not grandchild.attrib['amount'] == '0.00' and \
+                not grandchild.attrib['amount'].startswith(DEFAULT_CCY.get_mnemonic()):
+             logging.warn("Leg of transaction \"" + txDescription + "\" on account \"" + splAccount + "\" for date " + 
+                child.attrib['date'] + " has been added in " + DEFAULT_CCY.get_mnemonic() + " but in MoneyGuru is of " +
+                grandchild.attrib['amount'])
+
+           amount = int(Decimal(splAmountStr) * DEFAULT_CCY.get_fraction())
+           spl = gnucash.Split(session.book)
+           spl.SetParent(tx)
+           if "" != splAccount:
+             spl.SetAccount(session.book.get_root_account().lookup_by_name(splAccount))
+           spl.SetValue(gnucash.GncNumeric(amount, DEFAULT_CCY.get_fraction()))
+           spl.SetAmount(gnucash.GncNumeric(amount, DEFAULT_CCY.get_fraction()))
+
+           if memo != None:
+             spl.SetMemo(memo)
+        else:
+          warnUnrecognised(grandchild.tag)
+
+      tx.CommitEdit()
+      markMigrated(child.tag)
     else: # Don't know what to do with it
       warnUnrecognised(child.tag)
 
