@@ -61,7 +61,7 @@ if __name__ == '__main__':
       acc = gnucash.Account(session.book)
       acc.SetName(groupName)
       acc.SetType(moneyGuruToGnuCashAccountType[groupType]) 
-      acc.SetCommodity(DEFAULT_CCY) # TODO: default ccy
+      acc.SetCommodity(DEFAULT_CCY)
 
       session.book.get_root_account().append_child(acc)
 
