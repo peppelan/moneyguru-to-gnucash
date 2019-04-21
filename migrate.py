@@ -1,11 +1,20 @@
 #!/usr/bin/env python
+from unidecode import unidecode
 import logging
 import sys
+
+import gnucash
 import xml.etree.cElementTree as ET
 
-from gnucash import Session, Transaction, Split, GncNumeric
-
 unrecognisedDict = dict()
+migratedDict = dict()
+
+moneyGuruToGnuCashAccountType = {
+  'asset' : gnucash.ACCT_TYPE_ASSET,
+  'liability' : gnucash.ACCT_TYPE_LIABILITY,
+  'income' : gnucash.ACCT_TYPE_INCOME,
+  'expense' : gnucash.ACCT_TYPE_EXPENSE,
+}
 
 # Use this to remember missed stuff
 def warnUnrecognised(thing):
@@ -14,9 +23,18 @@ def warnUnrecognised(thing):
   else:
      unrecognisedDict[thing] = 1
 
+# Use this to remember migrated stuff
+def markMigrated(thing):
+  if thing in migratedDict.keys():
+     migratedDict[thing] = migratedDict[thing] + 1
+  else:
+     migratedDict[thing] = 1
+
 # Main
 if __name__ == '__main__':
   # Set up:
+  logging.basicConfig(level=logging.INFO)
+
   if len(sys.argv) != 3:
     logging.fatal('Wrong arguments. Usage: ./script.py [input_moneyguru_file] [output_gnucash_file]')
     sys.exit(1)
@@ -28,16 +46,31 @@ if __name__ == '__main__':
     sys.exit(1)
 
   # - destination file
-  session = Session(sys.argv[2])
+  session = gnucash.Session(sys.argv[2], is_new=True)
 
   # The parsing itself
   for child in root: 
-    # TODO do something
-    
-    # Don't know what to do with it
-    warnUnrecognised(child.tag)
+    if child.tag == 'group': # Groups
+      groupName = unidecode(unicode(child.attrib['name']))
+      groupType = child.attrib['type']
+
+      acc = gnucash.Account(session.book)
+      acc.SetName(groupName)
+      acc.SetType(moneyGuruToGnuCashAccountType[groupType]) 
+      acc.SetCommodity(session.book.get_table().lookup("CURRENCY", "EUR"))
+
+      session.book.get_root_account().append_child(acc)
+
+      markMigrated(child.tag)
+
+    else: # Don't know what to do with it
+      warnUnrecognised(child.tag)
 
   # Wrap up
+  session.save()
   session.end()
   for thing, count in unrecognisedDict.items():
-     print "Missed " + str(count) + " entities of type " + thing
+     logging.warn("Missed " + str(count) + " entities of type " + thing)
+
+  for thing, count in migratedDict.items():
+     logging.info("Migrated " + str(count) + " entities of type " + thing)
